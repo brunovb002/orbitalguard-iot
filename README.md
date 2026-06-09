@@ -16,7 +16,7 @@ Sistema inteligente de monitoramento e prevenção de enchentes utilizando ESP32
 |Gabriel Gomes Mancera|555427|
 |João Victor Rebello de Santis|555287|
 
-**Turma:** 2TDS — Fevereiro 2026  
+**Turma:** 2TDSPX — Fevereiro 2026  
 **Disciplina:** Disruptive Architectures: IoT, IoB \& Generative IA  
 **Global Solution:** 2026/1
 
@@ -192,7 +192,7 @@ lib\_deps =
 
 ## 🎥 Vídeo de Demonstração
 
-> Link do vídeo no YouTube: \_a adicionar\_
+> Link do vídeo no YouTube: https://youtu.be/NHOOTDonkQY
 
 \---
 

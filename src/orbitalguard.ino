@@ -1,6 +1,7 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 #include <PubSubClient.h>
+#include <WebServer.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -36,11 +37,12 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
 
 WiFiClientSecure espClient;
 PubSubClient     mqtt(espClient);
+WebServer        server(80);
 
-float    distanciaCm  = 0;
-String   nivelRisco   = "BAIXO";
-bool     alertaManual = false;
-bool     btnAnterior  = HIGH;
+float    distanciaCm   = 0;
+String   nivelRisco    = "BAIXO";
+bool     alertaManual  = false;
+bool     btnAnterior   = HIGH;
 bool     mqttConectado = false;
 
 unsigned long ultimoEnvio    = 0;
@@ -61,10 +63,18 @@ float medirDistancia() {
   return duracao * 0.034 / 2.0;
 }
 
+int calcularNivelPercent(float distancia) {
+  float maxDist = 150.0;
+  float nivel = ((maxDist - distancia) / maxDist) * 100.0;
+  if (nivel < 0) nivel = 0;
+  if (nivel > 100) nivel = 100;
+  return (int)nivel;
+}
+
 String calcularRisco(float distancia, bool alerta) {
-  if (alerta)           return "ALTO";
-  if (distancia < 30.0) return "ALTO";
-  if (distancia < 60.0) return "MEDIO";
+  if (alerta)            return "ALTO";
+  if (distancia < 30.0)  return "ALTO";
+  if (distancia < 60.0)  return "MEDIO";
   return "BAIXO";
 }
 
@@ -115,8 +125,8 @@ void atualizarDisplay(float distancia, String risco, bool alerta, bool mqtt_ok) 
     display.println("!! PANICO !!");
   } else {
     display.setCursor(0, 56);
-    display.print("MQTT: ");
-    display.println(mqtt_ok ? "OK" : "...");
+    display.print("MQTT:");
+    display.println(mqtt_ok ? "OK" : "..");
   }
 
   display.display();
@@ -153,6 +163,55 @@ void publicarDados(float distancia, String risco, bool alerta) {
 
   Serial.printf("[MQTT] nivel=%.1fcm | risco=%s | alerta=%d\n",
                 distancia, risco.c_str(), alerta);
+}
+
+// ===================== ENDPOINTS API REST =====================
+
+// GET /status — leitura completa atual
+void handleStatus() {
+  String json = "{";
+  json += "\"distancia_cm\":" + String(distanciaCm, 1) + ",";
+  json += "\"nivel_percent\":" + String(calcularNivelPercent(distanciaCm)) + ",";
+  json += "\"risco\":\"" + nivelRisco + "\",";
+  json += "\"alerta_manual\":" + String(alertaManual ? "true" : "false") + ",";
+  json += "\"mqtt_conectado\":" + String(mqttConectado ? "true" : "false") + ",";
+  json += "\"uptime_ms\":" + String(millis());
+  json += "}";
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", json);
+  Serial.println("[API] GET /status");
+}
+
+// GET /risco — só o nível de risco
+void handleRisco() {
+  String json = "{";
+  json += "\"risco\":\"" + nivelRisco + "\",";
+  json += "\"distancia_cm\":" + String(distanciaCm, 1);
+  json += "}";
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.send(200, "application/json", json);
+  Serial.println("[API] GET /risco");
+}
+
+// POST /alerta — aciona ou desativa alerta manual
+void handleAlerta() {
+  if (server.method() == HTTP_POST) {
+    alertaManual = !alertaManual;
+    String json = "{";
+    json += "\"alerta_manual\":" + String(alertaManual ? "true" : "false") + ",";
+    json += "\"mensagem\":\"" + String(alertaManual ? "Alerta manual ativado" : "Alerta manual desativado") + "\"";
+    json += "}";
+    server.sendHeader("Access-Control-Allow-Origin", "*");
+    server.send(200, "application/json", json);
+    Serial.printf("[API] POST /alerta -> %s\n", alertaManual ? "ATIVADO" : "DESATIVADO");
+  } else {
+    server.send(405, "application/json", "{\"erro\":\"Metodo nao permitido. Use POST.\"}");
+  }
+}
+
+// Rota não encontrada
+void handleNotFound() {
+  server.send(404, "application/json", "{\"erro\":\"Endpoint nao encontrado\"}");
 }
 
 // ===================== SETUP =====================
@@ -197,6 +256,18 @@ void setup() {
     Serial.println("\nWi-Fi falhou, rodando sem rede.");
   }
 
+  // WebServer
+  server.on("/status", HTTP_GET, handleStatus);
+  server.on("/risco",  HTTP_GET, handleRisco);
+  server.on("/alerta", HTTP_POST, handleAlerta);
+  server.onNotFound(handleNotFound);
+  server.begin();
+  Serial.println("WebServer iniciado na porta 80");
+  Serial.printf("Endpoints disponiveis:\n");
+  Serial.printf("  GET  http://%s/status\n", WiFi.localIP().toString().c_str());
+  Serial.printf("  GET  http://%s/risco\n",  WiFi.localIP().toString().c_str());
+  Serial.printf("  POST http://%s/alerta\n", WiFi.localIP().toString().c_str());
+
   // MQTT
   espClient.setInsecure();
   mqtt.setServer(MQTT_BROKER, MQTT_PORT);
@@ -205,6 +276,7 @@ void setup() {
 // ===================== LOOP =====================
 
 void loop() {
+  server.handleClient();
   tentarConectarMQTT();
   mqtt.loop();
 
